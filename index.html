@@ -7,7 +7,6 @@
     <script src="https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-        /* Your CSS here... */
         body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { text-align: center; color: #333; }
@@ -30,28 +29,34 @@
         <button id="generateBtn" disabled>Download PDF</button>
     </div>
     
-    <div id="status">Loading AI Models... please wait.</div>
+    <div id="status">Loading AI Models from local repo...</div>
     <div id="preview"></div>
 </div>
 
 <script>
-    const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'; // Public CDN for models
+    // --- CHANGE 1: Point to current folder ---
+    const MODEL_URL = './'; 
+    
     const TARGET_WIDTH_MM = 27;
     const TARGET_HEIGHT_MM = 37;
-    const ZOOM_FACTOR = 2.2; // Adjusts how close the crop is (2.2 is standard ID)
+    const ZOOM_FACTOR = 2.2; 
     
     let processedImages = [];
 
     // 1. Initialize AI Models
     async function loadModels() {
         try {
+            // Load SSD MobileNet V1 (High Accuracy)
             await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
-            await faceapi.nets.faceLandmark68.loadFromUri(MODEL_URL); 
-            document.getElementById('status').innerText = "Ready! Please select photos.";
+            // Load Landmark Model (Required for alignment)
+            // Note: faceLandmark68Net alias is safer for some versions, but faceLandmark68 works too
+            await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL); 
+            
+            document.getElementById('status').innerText = "Ready! Models Loaded Locally.";
             document.getElementById('imageInput').disabled = false;
         } catch (err) {
-            document.getElementById('status').innerText = "Error loading models. Check internet connection.";
-            console.error(err);
+            document.getElementById('status').innerText = "Error loading models. Ensure files are in the repo root.";
+            console.error("Model Loading Error:", err);
         }
     }
 
@@ -78,15 +83,14 @@
                 const imgUrl = URL.createObjectURL(files[i]);
                 const img = await faceapi.fetchImage(imgUrl);
                 
-                // Detect Face
-                const detections = await faceapi.detectAllFaces(img).withFaceLandmarks();
+                // --- DETECT FACE (SSD MobileNet V1) ---
+                // Using standard confidence of 0.5
+                const detections = await faceapi.detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks();
                 
                 if (detections.length > 0) {
-                    // Use the largest face found
                     const face = detections[0].detection.box;
                     const croppedDataUrl = cropFace(img, face);
                     
-                    // Add to list and preview
                     processedImages.push(croppedDataUrl);
                     
                     const imgElem = document.createElement('img');
@@ -110,23 +114,19 @@
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         
-        // Calculate Dimensions
         const faceHeight = box.height;
         const cropHeight = faceHeight * ZOOM_FACTOR;
-        const cropWidth = cropHeight * (TARGET_WIDTH_MM / TARGET_HEIGHT_MM); // Aspect Ratio 27:37
+        const cropWidth = cropHeight * (TARGET_WIDTH_MM / TARGET_HEIGHT_MM); 
         
         const centerX = box.x + (box.width / 2);
         const centerY = box.y + (box.height / 2);
         
-        // Source coordinates
         const sx = centerX - (cropWidth / 2);
         const sy = centerY - (cropHeight / 2);
         
-        // Set canvas to high resolution for print
         canvas.width = cropWidth * 2; 
         canvas.height = cropHeight * 2;
         
-        // Draw cropped area
         ctx.drawImage(img, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
         
         return canvas.toDataURL('image/jpeg', 0.95);
@@ -142,22 +142,19 @@
         const A4_WIDTH = 210;
         const A4_HEIGHT = 297;
         
-        // Grid Calculation
-        const gridWidth = COLS * TARGET_WIDTH_MM;   // 189mm
-        const gridHeight = ROWS * TARGET_HEIGHT_MM; // 259mm
+        const gridWidth = COLS * TARGET_WIDTH_MM;   
+        const gridHeight = ROWS * TARGET_HEIGHT_MM; 
         
-        const marginX = (A4_WIDTH - gridWidth) / 2;  // 10.5mm
-        const marginY = (A4_HEIGHT - gridHeight) / 2; // 19mm
+        const marginX = (A4_WIDTH - gridWidth) / 2;  
+        const marginY = (A4_HEIGHT - gridHeight) / 2; 
         
         let idx = 0;
         
         processedImages.forEach((imgData, i) => {
-            // New Page check
             if (idx > 0 && idx % (COLS * ROWS) === 0) {
                 doc.addPage();
             }
             
-            // Grid Position (Local to page)
             const localIdx = idx % (COLS * ROWS);
             const col = localIdx % COLS;
             const row = Math.floor(localIdx / COLS);
