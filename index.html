@@ -109,59 +109,92 @@
         if (processedImages.length > 0) btn.disabled = false;
     });
 
-    // 3. Cropping Logic (Smart Shrink)
+    // 3. Cropping Logic (Top-Anchored Smart Shrink)
     function cropFace(img, box) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
+
         // --- 1. SETUP DIMENSIONS ---
-        const ratio = TARGET_WIDTH_MM / TARGET_HEIGHT_MM; // 27 divided by 37
-        const center_x = box.x + (box.width / 2);
-        const center_y = box.y + (box.height / 2);
+        const ratio = TARGET_WIDTH_MM / TARGET_HEIGHT_MM; // 27 divided by 37 = ~0.73
 
-        // Calculate the "Ideal" size based on your Zoom Factor
-        const ideal_height = box.height * ZOOM_FACTOR;
-        const ideal_width = ideal_height * ratio;
+        // Face Box Coordinates
+        const face_top = box.y;
+        const face_height = box.height;
+        const face_center_x = box.x + (box.width / 2);
+        const face_center_y = box.y + (box.height / 2);
 
-        // --- 2. DETECT LIMITS (The "Smart" Part) ---
-        // Calculate how much space we actually have from the center to the edges
-        const dist_left = center_x;
-        const dist_right = img.width - center_x;
-        const dist_top = center_y;
-        const dist_bottom = img.height - center_y;
+        // --- 2. CALCULATE IDEAL CROP ---
+        // We calculate height based on the face size
+        let crop_h = face_height * ZOOM_FACTOR;
+        let crop_w = crop_h * ratio;
 
-        // The maximum width we can have while keeping the face centered is 2x the smallest side distance
-        const max_available_w = 2 * Math.min(dist_left, dist_right);
-        // The maximum height we can have while keeping the face centered
-        const max_available_h = 2 * Math.min(dist_top, dist_bottom);
-
-        // --- 3. CALCULATE SCALING ---
-        // Check if our ideal box is too big for the available space
-        const scale_w = max_available_w / ideal_width;
-        const scale_h = max_available_h / ideal_height;
-
-        // We use the smallest scale to ensure BOTH sides fit. 
-        // We min(1, ...) because we never want to scale UP, only shrink DOWN.
-        const final_scale = Math.min(1, scale_w, scale_h);
-
-        const final_width = ideal_width * final_scale;
-        const final_height = ideal_height * final_scale;
-
-        // --- 4. DRAW ---
-        // Calculate new top-left corner (guaranteed to be inside the image)
-        const sx = center_x - (final_width / 2);
-        const sy = center_y - (final_height / 2);
+        // --- 3. SHIFT UPWARDS (The "Head Anchor") ---
+        // Instead of centering perfectly on the face center, we shift UP.
+        // We want the face to be slightly lower in the frame to leave room for the head.
+        // A shift of -10% to -15% of the crop height is usually perfect.
+        const vertical_shift = crop_h * 0.12; 
         
-        // Set canvas to high resolution (2x size)
-        canvas.width = final_width * 2; 
-        canvas.height = final_height * 2;
+        let center_y_adjusted = face_center_y - vertical_shift;
         
-        // Draw
-        ctx.drawImage(img, sx, sy, final_width, final_height, 0, 0, canvas.width, canvas.height);
+        // Calculate proposed top/left based on this adjusted center
+        let sx = face_center_x - (crop_w / 2);
+        let sy = center_y_adjusted - (crop_h / 2);
+
+        // --- 4. SMART CLAMP (Prevent Going Out of Image) ---
+        
+        // A. Fix Top Edge (Prioritize Head!)
+        if (sy < 0) {
+            // If we are cutting off the top, shift down just enough to fit
+            sy = 0;
+            // Recalculate center based on new top
+            center_y_adjusted = sy + (crop_h / 2);
+        }
+
+        // B. Fix Bottom Edge
+        if (sy + crop_h > img.height) {
+            // If bottom goes out, we MUST shrink the whole box (to keep ratio)
+            // We can't shift up because that would violate the "top edge" check we just did.
+            const max_h = img.height - sy;
+            crop_h = max_h;
+            crop_w = crop_h * ratio; // Shrink width to match
+            // Recalculate sx to keep horizontal center
+            sx = face_center_x - (crop_w / 2);
+        }
+
+        // C. Fix Left Edge
+        if (sx < 0) {
+            sx = 0;
+            // If we hit left edge, we might need to shrink if width > image width
+            if (crop_w > img.width) {
+                 crop_w = img.width;
+                 crop_h = crop_w / ratio;
+            }
+        }
+
+        // D. Fix Right Edge
+        if (sx + crop_w > img.width) {
+            // Shift left to fit
+            sx = img.width - crop_w;
+            // Double check left edge again (in case image is extremely narrow)
+            if (sx < 0) {
+                sx = 0;
+                crop_w = img.width;
+                crop_h = crop_w / ratio;
+            }
+        }
+
+        // --- 5. DRAW ---
+        canvas.width = crop_w * 2; // High res
+        canvas.height = crop_h * 2;
+
+        // Fill white first (just in case of tiny rounding errors)
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.drawImage(img, sx, sy, crop_w, crop_h, 0, 0, canvas.width, canvas.height);
         
         return canvas.toDataURL('image/jpeg', 0.95);
     }
-
     // 4. PDF Generation Logic (jsPDF)
     document.getElementById('generateBtn').addEventListener('click', () => {
         const { jsPDF } = window.jspdf;
