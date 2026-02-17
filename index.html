@@ -109,25 +109,55 @@
         if (processedImages.length > 0) btn.disabled = false;
     });
 
-    // 3. Cropping Logic (Canvas)
+    // 3. Cropping Logic (Smart Shrink)
     function cropFace(img, box) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         
-        const faceHeight = box.height;
-        const cropHeight = faceHeight * ZOOM_FACTOR;
-        const cropWidth = cropHeight * (TARGET_WIDTH_MM / TARGET_HEIGHT_MM); 
+        // --- 1. SETUP DIMENSIONS ---
+        const ratio = TARGET_WIDTH_MM / TARGET_HEIGHT_MM; // 27 divided by 37
+        const center_x = box.x + (box.width / 2);
+        const center_y = box.y + (box.height / 2);
+
+        // Calculate the "Ideal" size based on your Zoom Factor
+        const ideal_height = box.height * ZOOM_FACTOR;
+        const ideal_width = ideal_height * ratio;
+
+        // --- 2. DETECT LIMITS (The "Smart" Part) ---
+        // Calculate how much space we actually have from the center to the edges
+        const dist_left = center_x;
+        const dist_right = img.width - center_x;
+        const dist_top = center_y;
+        const dist_bottom = img.height - center_y;
+
+        // The maximum width we can have while keeping the face centered is 2x the smallest side distance
+        const max_available_w = 2 * Math.min(dist_left, dist_right);
+        // The maximum height we can have while keeping the face centered
+        const max_available_h = 2 * Math.min(dist_top, dist_bottom);
+
+        // --- 3. CALCULATE SCALING ---
+        // Check if our ideal box is too big for the available space
+        const scale_w = max_available_w / ideal_width;
+        const scale_h = max_available_h / ideal_height;
+
+        // We use the smallest scale to ensure BOTH sides fit. 
+        // We min(1, ...) because we never want to scale UP, only shrink DOWN.
+        const final_scale = Math.min(1, scale_w, scale_h);
+
+        const final_width = ideal_width * final_scale;
+        const final_height = ideal_height * final_scale;
+
+        // --- 4. DRAW ---
+        // Calculate new top-left corner (guaranteed to be inside the image)
+        const sx = center_x - (final_width / 2);
+        const sy = center_y - (final_height / 2);
         
-        const centerX = box.x + (box.width / 2);
-        const centerY = box.y + (box.height / 2);
+        // Set canvas to high resolution (2x size)
+        canvas.width = final_width * 2; 
+        canvas.height = final_height * 2;
         
-        const sx = centerX - (cropWidth / 2);
-        const sy = centerY - (cropHeight / 2);
-        
-        canvas.width = cropWidth * 2; 
-        canvas.height = cropHeight * 2;
-        
-        ctx.drawImage(img, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
+        // Draw
+        ctx.drawImage(img, sx, sy, final_width, final_height, 0, 0, canvas.width, canvas.height);
         
         return canvas.toDataURL('image/jpeg', 0.95);
     }
