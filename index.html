@@ -15,10 +15,10 @@
         button:disabled { background: #ccc; cursor: not-allowed; }
         #status { text-align: center; margin-top: 10px; font-weight: bold; color: #555; }
         
-        /* --- NEW: Style for the failed files list --- */
+        /* Style for the failed files list */
         #failed-log { 
             margin-top: 15px; 
-            padding: 10px; 
+            padding: 15px; 
             background: #ffe6e6; 
             border: 1px solid #ffcccc; 
             border-radius: 4px; 
@@ -27,6 +27,8 @@
             display: none; /* Hidden by default */
         }
         #failed-log strong { display: block; margin-bottom: 5px; }
+        #failed-log ul { margin: 10px 0 10px 20px; padding: 0; text-align: left; }
+        #failed-log li { margin-bottom: 4px; }
 
         #preview { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-top: 20px; }
         .preview-item { width: 54px; height: 74px; object-fit: cover; border: 1px solid #ddd; }
@@ -52,7 +54,8 @@
 
 <script>
     // Configuration
-    const MODEL_URL = './'; // Pointing to local repo models
+    // If you are hosting the models in the same folder as this file, keep it './'
+    const MODEL_URL = './'; 
     const TARGET_WIDTH_MM = 27;
     const TARGET_HEIGHT_MM = 37;
     const ZOOM_FACTOR = 2.2; 
@@ -69,7 +72,7 @@
             document.getElementById('status').innerText = "Ready! Please select photos.";
             document.getElementById('imageInput').disabled = false;
         } catch (err) {
-            document.getElementById('status').innerText = "Error loading models. Ensure files are in the repo root.";
+            document.getElementById('status').innerText = "Error loading models. Check model URL or files.";
             console.error("Model Loading Error:", err);
         }
     }
@@ -92,7 +95,7 @@
         failedLog.style.display = 'none';
         failedLog.innerHTML = '';
         processedImages = [];
-        let failedFiles = []; // Array to track photos with no faces
+        let failedFiles = []; // Array to track photos with no faces or errors
         
         btn.disabled = true;
 
@@ -117,7 +120,7 @@
                     imgElem.className = 'preview-item';
                     preview.appendChild(imgElem);
                 } else {
-                    // --- NEW: Track failed detection ---
+                    // Track failed detection
                     console.warn(`No face found in ${files[i].name}`);
                     failedFiles.push(files[i].name);
                 }
@@ -128,7 +131,7 @@
             }
         }
 
-        // --- NEW: Update UI with results (List Format) ---
+        // --- Update UI with results (List Format) ---
         status.innerText = `Done! Processed ${processedImages.length} faces successfully.`;
         
         if (failedFiles.length > 0) {
@@ -140,14 +143,15 @@
             // Output as an unordered list (<ul>)
             failedLog.innerHTML = `
                 <strong>⚠️ Could not detect a face in the following files:</strong> 
-                <ul style="text-align: left; margin: 10px 0;">
+                <ul>
                     ${listItems}
                 </ul>
-                <em>Suggestion: Use the manual mobile cropper for these specific photos.</em>
+                <em>Suggestion: Use the manual cropper tool for these specific photos.</em>
             `;
         }
 
         if (processedImages.length > 0) btn.disabled = false;
+    });
 
     // 3. Cropping Logic (Canvas)
     function cropFace(img, box) {
