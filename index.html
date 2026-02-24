@@ -14,6 +14,20 @@
         button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         #status { text-align: center; margin-top: 10px; font-weight: bold; color: #555; }
+        
+        /* --- NEW: Style for the failed files list --- */
+        #failed-log { 
+            margin-top: 15px; 
+            padding: 10px; 
+            background: #ffe6e6; 
+            border: 1px solid #ffcccc; 
+            border-radius: 4px; 
+            color: #cc0000; 
+            font-size: 14px;
+            display: none; /* Hidden by default */
+        }
+        #failed-log strong { display: block; margin-bottom: 5px; }
+
         #preview { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-top: 20px; }
         .preview-item { width: 54px; height: 74px; object-fit: cover; border: 1px solid #ddd; }
     </style>
@@ -22,37 +36,37 @@
 
 <div class="container">
     <h1>Face Grid Generator (7x7)</h1>
-    <p style="text-align:center">Select ~49 photos. They will be cropped to 27x37mm and arranged on A4.</p>
+    <p style="text-align:center">Select photos. They will be auto-cropped and arranged on A4.</p>
     
     <div class="controls">
         <input type="file" id="imageInput" multiple accept="image/*" disabled>
         <button id="generateBtn" disabled>Download PDF</button>
     </div>
     
-    <div id="status">Loading AI Models from local repo...</div>
+    <div id="status">Loading AI Models...</div>
+    
+    <div id="failed-log"></div>
+
     <div id="preview"></div>
 </div>
 
 <script>
-    // --- CHANGE 1: Point to current folder ---
-    const MODEL_URL = './'; 
-    
+    // Configuration
+    const MODEL_URL = './'; // Pointing to local repo models
     const TARGET_WIDTH_MM = 27;
     const TARGET_HEIGHT_MM = 37;
-    const ZOOM_FACTOR = 2.1; 
+    const ZOOM_FACTOR = 2.2; 
     
     let processedImages = [];
 
     // 1. Initialize AI Models
     async function loadModels() {
         try {
-            // Load SSD MobileNet V1 (High Accuracy)
+            // Using SSD MobileNet V1 for batch processing accuracy
             await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
-            // Load Landmark Model (Required for alignment)
-            // Note: faceLandmark68Net alias is safer for some versions, but faceLandmark68 works too
             await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL); 
             
-            document.getElementById('status').innerText = "Ready! Models Loaded Locally.";
+            document.getElementById('status').innerText = "Ready! Please select photos.";
             document.getElementById('imageInput').disabled = false;
         } catch (err) {
             document.getElementById('status').innerText = "Error loading models. Ensure files are in the repo root.";
@@ -62,7 +76,7 @@
 
     loadModels();
 
-    // 2. Handle File Selection
+    // 2. Handle File Selection & Processing
     document.getElementById('imageInput').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
@@ -70,10 +84,16 @@
         const status = document.getElementById('status');
         const preview = document.getElementById('preview');
         const btn = document.getElementById('generateBtn');
+        const failedLog = document.getElementById('failed-log');
         
+        // Reset UI
         status.innerText = `Processing ${files.length} images...`;
         preview.innerHTML = '';
+        failedLog.style.display = 'none';
+        failedLog.innerHTML = '';
         processedImages = [];
+        let failedFiles = []; // Array to track photos with no faces
+        
         btn.disabled = true;
 
         for (let i = 0; i < files.length; i++) {
@@ -83,8 +103,7 @@
                 const imgUrl = URL.createObjectURL(files[i]);
                 const img = await faceapi.fetchImage(imgUrl);
                 
-                // --- DETECT FACE (SSD MobileNet V1) ---
-                // Using standard confidence of 0.5
+                // Detect Face
                 const detections = await faceapi.detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 })).withFaceLandmarks();
                 
                 if (detections.length > 0) {
@@ -98,103 +117,57 @@
                     imgElem.className = 'preview-item';
                     preview.appendChild(imgElem);
                 } else {
+                    // --- NEW: Track failed detection ---
                     console.warn(`No face found in ${files[i].name}`);
+                    failedFiles.push(files[i].name);
                 }
             } catch (err) {
+                // Track errors (e.g., corrupted image files)
                 console.error(`Error processing ${files[i].name}`, err);
+                failedFiles.push(`${files[i].name} (File Error)`);
             }
         }
 
-        status.innerText = `Done! Processed ${processedImages.length} faces.`;
+        // --- NEW: Update UI with results ---
+        status.innerText = `Done! Processed ${processedImages.length} faces successfully.`;
+        
+        if (failedFiles.length > 0) {
+            failedLog.style.display = 'block';
+            failedLog.innerHTML = `<strong>⚠️ Could not detect a face in the following files:</strong> 
+                                   ${failedFiles.join(', ')}<br><br>
+                                   <em>Suggestion: Use the manual mobile cropper for these specific photos.</em>`;
+        }
+
         if (processedImages.length > 0) btn.disabled = false;
     });
 
-    // 3. Cropping Logic (Top-Anchored Smart Shrink)
+    // 3. Cropping Logic (Canvas)
     function cropFace(img, box) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-
-        // --- 1. SETUP DIMENSIONS ---
-        const ratio = TARGET_WIDTH_MM / TARGET_HEIGHT_MM; // 27 divided by 37 = ~0.73
-
-        // Face Box Coordinates
-        const face_top = box.y;
-        const face_height = box.height;
-        const face_center_x = box.x + (box.width / 2);
-        const face_center_y = box.y + (box.height / 2);
-
-        // --- 2. CALCULATE IDEAL CROP ---
-        // We calculate height based on the face size
-        let crop_h = face_height * ZOOM_FACTOR;
-        let crop_w = crop_h * ratio;
-
-        // --- 3. SHIFT UPWARDS (The "Head Anchor") ---
-        // Instead of centering perfectly on the face center, we shift UP.
-        // We want the face to be slightly lower in the frame to leave room for the head.
-        // A shift of -10% to -15% of the crop height is usually perfect.
-        const vertical_shift = crop_h * 0.12; 
         
-        let center_y_adjusted = face_center_y - vertical_shift;
+        const faceHeight = box.height;
+        const cropHeight = faceHeight * ZOOM_FACTOR;
+        const cropWidth = cropHeight * (TARGET_WIDTH_MM / TARGET_HEIGHT_MM); 
         
-        // Calculate proposed top/left based on this adjusted center
-        let sx = face_center_x - (crop_w / 2);
-        let sy = center_y_adjusted - (crop_h / 2);
-
-        // --- 4. SMART CLAMP (Prevent Going Out of Image) ---
+        const centerX = box.x + (box.width / 2);
+        const centerY = box.y + (box.height / 2);
         
-        // A. Fix Top Edge (Prioritize Head!)
-        if (sy < 0) {
-            // If we are cutting off the top, shift down just enough to fit
-            sy = 0;
-            // Recalculate center based on new top
-            center_y_adjusted = sy + (crop_h / 2);
-        }
-
-        // B. Fix Bottom Edge
-        if (sy + crop_h > img.height) {
-            // If bottom goes out, we MUST shrink the whole box (to keep ratio)
-            // We can't shift up because that would violate the "top edge" check we just did.
-            const max_h = img.height - sy;
-            crop_h = max_h;
-            crop_w = crop_h * ratio; // Shrink width to match
-            // Recalculate sx to keep horizontal center
-            sx = face_center_x - (crop_w / 2);
-        }
-
-        // C. Fix Left Edge
-        if (sx < 0) {
-            sx = 0;
-            // If we hit left edge, we might need to shrink if width > image width
-            if (crop_w > img.width) {
-                 crop_w = img.width;
-                 crop_h = crop_w / ratio;
-            }
-        }
-
-        // D. Fix Right Edge
-        if (sx + crop_w > img.width) {
-            // Shift left to fit
-            sx = img.width - crop_w;
-            // Double check left edge again (in case image is extremely narrow)
-            if (sx < 0) {
-                sx = 0;
-                crop_w = img.width;
-                crop_h = crop_w / ratio;
-            }
-        }
-
-        // --- 5. DRAW ---
-        canvas.width = crop_w * 2; // High res
-        canvas.height = crop_h * 2;
-
-        // Fill white first (just in case of tiny rounding errors)
-        ctx.fillStyle = "#FFFFFF";
+        const sx = centerX - (cropWidth / 2);
+        const sy = centerY - (cropHeight / 2);
+        
+        canvas.width = cropWidth * 2; 
+        canvas.height = cropHeight * 2;
+        
+        // Fill background white to prevent black margins
+        ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.drawImage(img, sx, sy, crop_w, crop_h, 0, 0, canvas.width, canvas.height);
+        
+        ctx.drawImage(img, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
         
         return canvas.toDataURL('image/jpeg', 0.95);
     }
+
     // 4. PDF Generation Logic (jsPDF)
     document.getElementById('generateBtn').addEventListener('click', () => {
         const { jsPDF } = window.jspdf;
@@ -229,7 +202,7 @@
             idx++;
         });
         
-        doc.save('faces_grid_7x7.pdf');
+        doc.save('faces_grid.pdf');
     });
 </script>
 
