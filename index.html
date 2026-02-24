@@ -128,18 +128,26 @@
             }
         }
 
-        // --- NEW: Update UI with results ---
+        // --- NEW: Update UI with results (List Format) ---
         status.innerText = `Done! Processed ${processedImages.length} faces successfully.`;
         
         if (failedFiles.length > 0) {
             failedLog.style.display = 'block';
-            failedLog.innerHTML = `<strong>⚠️ Could not detect a face in the following files:</strong> 
-                                   ${failedFiles.join(', ')}<br><br>
-                                   <em>Suggestion: Use the manual mobile cropper for these specific photos.</em>`;
+            
+            // Convert the array of file names into HTML list items
+            const listItems = failedFiles.map(name => `<li>${name}</li>`).join('');
+            
+            // Output as an unordered list (<ul>)
+            failedLog.innerHTML = `
+                <strong>⚠️ Could not detect a face in the following files:</strong> 
+                <ul style="text-align: left; margin: 10px 0;">
+                    ${listItems}
+                </ul>
+                <em>Suggestion: Use the manual mobile cropper for these specific photos.</em>
+            `;
         }
 
         if (processedImages.length > 0) btn.disabled = false;
-    });
 
     // 3. Cropping Logic (Canvas)
     function cropFace(img, box) {
